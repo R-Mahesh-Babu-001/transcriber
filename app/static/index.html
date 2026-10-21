@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>YouTube Transcriber — Get Full Video Transcripts</title>
+  <meta name="description" content="Extract full YouTube video transcripts instantly. Download as TXT, SRT, VTT, JSON, or Markdown. Free, no sign-up required.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="container">
+
+    <!-- Header -->
+    <header class="app-header">
+      <h1 class="app-header__title">YouTube Transcriber</h1>
+      <p class="app-header__subtitle">Paste a YouTube URL to get the full transcript</p>
+      <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle dark/light mode" title="Toggle theme">
+        🌙
+      </button>
+    </header>
+
+    <!-- Cold Start Notice -->
+    <div class="cold-start-banner" id="coldStartBanner">
+      <span class="cold-start-banner__icon">⏳</span>
+      <span>
+        This app runs on Render's free tier. If the first request is slow (~30-60s), the server is waking up from sleep. Subsequent requests will be fast.
+      </span>
+    </div>
+
+    <!-- Input Card -->
+    <div class="card">
+      <div class="input-group">
+        <input
+          type="url"
+          id="urlInput"
+          class="input-group__field"
+          placeholder="Paste YouTube URL or video ID..."
+          aria-label="YouTube URL or video ID"
+          autocomplete="off"
+          spellcheck="false"
+          maxlength="2048"
+        >
+        <button class="btn btn--secondary btn--icon" id="pasteBtn" type="button" aria-label="Paste from clipboard" title="Paste">
+          📋
+        </button>
+        <button class="btn btn--primary" id="fetchBtn" type="button">
+          <span id="fetchBtnText">Get Transcript</span>
+          <span id="fetchBtnSpinner" class="spinner" style="display:none"></span>
+        </button>
+      </div>
+
+      <div class="options-row" id="optionsRow">
+        <div class="dropdown-group">
+          <label for="langSelect">Language</label>
+          <select id="langSelect" aria-label="Transcript language">
+            <option value="">Auto (English)</option>
+          </select>
+        </div>
+        <div class="dropdown-group">
+          <label for="translateSelect">Translate to</label>
+          <select id="translateSelect" aria-label="Translate transcript to" disabled>
+            <option value="">None</option>
+          </select>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="timestampToggle" checked>
+          <span class="toggle__track"></span>
+          Timestamps
+        </label>
+      </div>
+    </div>
+
+    <!-- Loading Bar -->
+    <div class="loading-bar" id="loadingBar">
+      <div class="loading-bar__fill"></div>
+    </div>
+
+    <!-- Error / Info Message -->
+    <div class="message message--error" id="errorMsg" role="alert">
+      <span class="message__icon">❌</span>
+      <div class="message__text">
+        <span id="errorMsgText"></span>
+        <span class="message__tip" id="errorMsgTip"></span>
+      </div>
+    </div>
+
+    <!-- Results -->
+    <div class="results" id="results">
+      <div class="card fade-in">
+        <!-- Stats -->
+        <div class="stats-bar" id="statsBar">
+          <div class="stat">
+            <span class="stat__label">Words:</span>
+            <span class="stat__value" id="wordCount">0</span>
+          </div>
+          <div class="stat">
+            <span class="stat__label">Characters:</span>
+            <span class="stat__value" id="charCount">0</span>
+          </div>
+          <div class="stat">
+            <span class="stat__label">Language:</span>
+            <span class="stat__value" id="langDisplay">—</span>
+          </div>
+          <div class="stat">
+            <span class="stat__label">Type:</span>
+            <span class="stat__value" id="typeDisplay">—</span>
+          </div>
+        </div>
+
+        <!-- Action buttons -->
+        <div class="action-bar">
+          <button class="btn btn--secondary btn--sm" id="copyBtn" type="button">📋 Copy</button>
+          <button class="btn btn--secondary btn--sm" id="dlTxt" type="button" data-format="txt">⬇ TXT</button>
+          <button class="btn btn--secondary btn--sm" id="dlSrt" type="button" data-format="srt">⬇ SRT</button>
+          <button class="btn btn--secondary btn--sm" id="dlVtt" type="button" data-format="vtt">⬇ VTT</button>
+          <button class="btn btn--secondary btn--sm" id="dlJson" type="button" data-format="json">⬇ JSON</button>
+          <button class="btn btn--secondary btn--sm" id="dlMd" type="button" data-format="md">⬇ MD</button>
+        </div>
+
+        <!-- Search -->
+        <div class="search-box">
+          <span class="search-box__icon">🔍</span>
+          <input
+            type="search"
+            id="searchInput"
+            class="search-box__input"
+            placeholder="Search transcript..."
+            aria-label="Search within transcript"
+          >
+          <span class="search-box__count" id="searchCount"></span>
+        </div>
+
+        <!-- Transcript Display -->
+        <div class="transcript-container" id="transcriptContainer" tabindex="0" role="region" aria-label="Transcript content">
+          <div class="transcript-content" id="transcriptContent"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <p>Built with <a href="https://github.com/jdepoix/youtube-transcript-api" target="_blank" rel="noopener">youtube-transcript-api</a> · No API key needed · <a href="https://github.com" target="_blank" rel="noopener">Source</a></p>
+    </footer>
+  </div>
+
+  <!-- Copy Feedback Toast -->
+  <div class="copy-feedback" id="copyFeedback">✓ Copied to clipboard</div>
+
+  <script>
+  /* ============================================================
+     YouTube Transcriber — Frontend Logic
+     Handles: API calls, transcript rendering with chunking,
+     search/highlight, export downloads, theme toggle.
+     ============================================================ */
+  (function () {
+    'use strict';
+
+    // --- DOM refs ---
+    const $ = (sel) => document.querySelector(sel);
+    const urlInput = $('#urlInput');
+    const pasteBtn = $('#pasteBtn');
+    const fetchBtn = $('#fetchBtn');
+    const fetchBtnText = $('#fetchBtnText');
+    const fetchBtnSpinner = $('#fetchBtnSpinner');
+    const langSelect = $('#langSelect');
+    const translateSelect = $('#translateSelect');
+    const timestampToggle = $('#timestampToggle');
+    const loadingBar = $('#loadingBar');
+    const errorMsg = $('#errorMsg');
+    const errorMsgText = $('#errorMsgText');
+    const errorMsgTip = $('#errorMsgTip');
+    const results = $('#results');
+    const wordCount = $('#wordCount');
+    const charCount = $('#charCount');
+    const langDisplay = $('#langDisplay');
+    const typeDisplay = $('#typeDisplay');
+    const copyBtn = $('#copyBtn');
+    const searchInput = $('#searchInput');
+    const searchCount = $('#searchCount');
+    const transcriptContent = $('#transcriptContent');
+    const transcriptContainer = $('#transcriptContainer');
+    const copyFeedback = $('#copyFeedback');
+    const themeToggle = $('#themeToggle');
+
+    // --- State ---
+    let currentTranscript = null; // full API response
+    let currentSegments = [];     // segments array
+    let currentUrl = '';
+    let searchMatches = [];
+    let currentMatchIndex = -1;
+
+    // --- Theme ---
+    function initTheme() {
+      const saved = localStorage.getItem('theme');
+      if (saved) {
+        document.documentElement.setAttribute('data-theme', saved);
+        themeToggle.textContent = saved === 'dark' ? '☀️' : '🌙';
+      } else {
+        // Use system preference
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        themeToggle.textContent = prefersDark ? '☀️' : '🌙';
+      }
+    }
+
+    themeToggle.addEventListener('click', () => {
+      const current = document.documentElement.getAttribute('data-theme');
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      let isDark;
+
+      if (current) {
+        isDark = current === 'dark';
+      } else {
+        isDark = prefersDark;
+      }
+
+      const next = isDark ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      localStorage.setItem('theme', next);
+      themeToggle.textContent = next === 'dark' ? '☀️' : '🌙';
+    });
+
+    initTheme();
+
+    // --- Utilities ---
+    function showError(msg, tip = '') {
+      errorMsgText.textContent = msg;
+      errorMsgTip.textContent = tip;
+      errorMsg.classList.add('visible');
+      results.classList.remove('visible');
+    }
+
+    function hideError() {
+      errorMsg.classList.remove('visible');
+    }
+
+    function setLoading(loading) {
+      if (loading) {
+        loadingBar.classList.add('active');
+        fetchBtn.disabled = true;
+        fetchBtnText.textContent = 'Fetching...';
+        fetchBtnSpinner.style.display = 'inline-block';
+      } else {
+        loadingBar.classList.remove('active');
+        fetchBtn.disabled = false;
+        fetchBtnText.textContent = 'Get Transcript';
+        fetchBtnSpinner.style.display = 'none';
+      }
+    }
+
+    function showToast(msg) {
+      copyFeedback.textContent = msg;
+      copyFeedback.classList.add('show');
+      setTimeout(() => copyFeedback.classList.remove('show'), 2000);
+    }
+
+    function formatTimestamp(seconds) {
+      const h = Math.floor(seconds / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      const s = Math.floor(seconds % 60);
+      if (h > 0) return `[${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}]`;
+      return `[${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}]`;
+    }
+
+    // Escape HTML to prevent XSS
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.appendChild(document.createTextNode(str));
+      return div.innerHTML;
+    }
+
+    // --- Paste button ---
+    pasteBtn.addEventListener('click', async () => {
+      try {
+        const text = await navigator.clipboard.readText();
+        urlInput.value = text.trim();
+        urlInput.focus();
+      } catch {
+        // Clipboard API not available or denied
+        urlInput.focus();
+        urlInput.select();
+      }
+    });
+
+    // --- Enter key to fetch ---
+    urlInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') fetchTranscript();
+    });
+
+    fetchBtn.addEventListener('click', fetchTranscript);
+
+    // --- Fetch languages when URL changes ---
+    let langFetchTimeout = null;
+    urlInput.addEventListener('input', () => {
+      clearTimeout(langFetchTimeout);
+      langFetchTimeout = setTimeout(() => {
+        const url = urlInput.value.trim();
+        if (url.length > 5) fetchLanguages(url);
+      }, 600);
+    });
+
+    async function fetchLanguages(url) {
+      try {
+        const resp = await fetch(`/api/languages?url=${encodeURIComponent(url)}`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+
+        // Populate language dropdown
+        langSelect.innerHTML = '<option value="">Auto (English)</option>';
+        (data.transcripts || []).forEach(t => {
+          const opt = document.createElement('option');
+          opt.value = t.language_code;
+          opt.textContent = `${t.language} ${t.is_generated ? '(auto)' : '(manual)'}`;
+          langSelect.appendChild(opt);
+        });
+
+        // Populate translate dropdown from the first translatable transcript
+        translateSelect.innerHTML = '<option value="">None</option>';
+        const translatable = (data.transcripts || []).find(t => t.is_translatable);
+        if (translatable && translatable.translation_languages) {
+          translateSelect.disabled = false;
+          translatable.translation_languages.forEach(tl => {
+            const opt = document.createElement('option');
+            opt.value = tl.language_code;
+            opt.textContent = tl.language;
+            translateSelect.appendChild(opt);
+          });
+        } else {
+          translateSelect.disabled = true;
+        }
+      } catch {
+        // Silently fail — languages are optional UX enhancement
+      }
+    }
+
+    // Update translate dropdown when language selection changes
+    langSelect.addEventListener('change', () => {
+      // Re-enable/disable translate based on selected transcript's translatability
+      // (simplified: always allow if translations were loaded)
+    });
+
+    // --- Fetch transcript ---
+    async function fetchTranscript() {
+      const url = urlInput.value.trim();
+      if (!url) {
+        showError('Please enter a YouTube URL or video ID.');
+        return;
+      }
+
+      hideError();
+      setLoading(true);
+      currentUrl = url;
+
+      const body = {
+        url: url,
+        include_timestamps: timestampToggle.checked,
+      };
+
+      const lang = langSelect.value;
+      if (lang) body.language = lang;
+
+      const translate = translateSelect.value;
+      if (translate) body.translate_to = translate;
+
+      try {
+        const resp = await fetch('/api/transcript', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({ detail: 'Unknown error' }));
+          let msg, tip = '';
+
+          if (typeof err.detail === 'object' && err.detail.message) {
+            msg = err.detail.message;
+            if (err.detail.error === 'ip_blocked') {
+              tip = '💡 Tip: This usually happens because the server runs on a cloud IP. The site owner may need to configure a proxy.';
+            }
+          } else if (typeof err.detail === 'string') {
+            msg = err.detail;
+          } else {
+            msg = `Request failed (HTTP ${resp.status})`;
+          }
+
+          showError(msg, tip);
+          setLoading(false);
+          return;
+        }
+
+        const data = await resp.json();
+        currentTranscript = data;
+        currentSegments = data.segments || [];
+        renderTranscript(data);
+
+        // Also fetch languages in the background for the dropdowns
+        fetchLanguages(url);
+
+      } catch (e) {
+        showError('Network error. Please check your connection and try again.');
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    // --- Render transcript (chunked for performance) ---
+    function renderTranscript(data) {
+      results.classList.add('visible');
+      hideError();
+
+      // Update stats
+      wordCount.textContent = (data.word_count || 0).toLocaleString();
+      charCount.textContent = (data.char_count || 0).toLocaleString();
+      langDisplay.textContent = data.language || '—';
+      typeDisplay.textContent = data.is_generated ? 'Auto-generated' : 'Manual';
+
+      // Render segments in chunks to avoid freezing on huge transcripts
+      const segments = data.segments || [];
+      const showTimestamps = timestampToggle.checked;
+      const CHUNK_SIZE = 500;
+
+      transcriptContent.innerHTML = '';
+      searchInput.value = '';
+      searchCount.textContent = '';
+
+      let i = 0;
+      function renderChunk() {
+        const fragment = document.createDocumentFragment();
+        const end = Math.min(i + CHUNK_SIZE, segments.length);
+
+        for (; i < end; i++) {
+          const seg = segments[i];
+          if (showTimestamps) {
+            const ts = document.createElement('span');
+            ts.className = 'timestamp';
+            ts.textContent = formatTimestamp(seg.start);
+            fragment.appendChild(ts);
+          }
+          const text = document.createElement('span');
+          text.className = 'segment';
+          text.setAttribute('data-index', i);
+          text.textContent = seg.text + ' ';
+          fragment.appendChild(text);
+
+          // Add line break after each segment for readability
+          if (showTimestamps) {
+            fragment.appendChild(document.createElement('br'));
+          }
+        }
+
+        transcriptContent.appendChild(fragment);
+
+        if (i < segments.length) {
+          requestAnimationFrame(renderChunk);
+        }
+      }
+
+      renderChunk();
+
+      // Scroll to top
+      transcriptContainer.scrollTop = 0;
+
+      // Hide cold start banner after first successful fetch
+      const banner = document.getElementById('coldStartBanner');
+      if (banner) banner.style.display = 'none';
+    }
+
+    // Re-render when timestamp toggle changes
+    timestampToggle.addEventListener('change', () => {
+      if (currentTranscript) renderTranscript(currentTranscript);
+    });
+
+    // --- Search within transcript ---
+    let searchTimeout = null;
+    searchInput.addEventListener('input', () => {
+      clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(performSearch, 200);
+    });
+
+    function performSearch() {
+      const query = searchInput.value.trim().toLowerCase();
+
+      // Clear previous highlights
+      transcriptContent.querySelectorAll('.highlight').forEach(el => {
+        const parent = el.parentNode;
+        parent.replaceChild(document.createTextNode(el.textContent), el);
+        parent.normalize();
+      });
+
+      searchMatches = [];
+      currentMatchIndex = -1;
+
+      if (!query) {
+        searchCount.textContent = '';
+        return;
+      }
+
+      // Highlight matches
+      const segments = transcriptContent.querySelectorAll('.segment');
+      let matchCount = 0;
+
+      segments.forEach(seg => {
+        const text = seg.textContent;
+        const lowerText = text.toLowerCase();
+        const idx = lowerText.indexOf(query);
+
+        if (idx !== -1) {
+          // Split and wrap match
+          const frag = document.createDocumentFragment();
+          let lastIdx = 0;
+          let pos = lowerText.indexOf(query, 0);
+
+          while (pos !== -1) {
+            if (pos > lastIdx) {
+              frag.appendChild(document.createTextNode(text.slice(lastIdx, pos)));
+            }
+            const mark = document.createElement('mark');
+            mark.className = 'highlight';
+            mark.textContent = text.slice(pos, pos + query.length);
+            frag.appendChild(mark);
+            searchMatches.push(mark);
+            matchCount++;
+            lastIdx = pos + query.length;
+            pos = lowerText.indexOf(query, lastIdx);
+          }
+
+          if (lastIdx < text.length) {
+            frag.appendChild(document.createTextNode(text.slice(lastIdx)));
+          }
+
+          seg.innerHTML = '';
+          seg.appendChild(frag);
+        }
+      });
+
+      searchCount.textContent = matchCount > 0 ? `${matchCount} found` : 'No matches';
+
+      // Scroll to first match
+      if (searchMatches.length > 0) {
+        currentMatchIndex = 0;
+        searchMatches[0].classList.add('current');
+        searchMatches[0].scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }
+    }
+
+    // Navigate matches with Enter
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && searchMatches.length > 0) {
+        e.preventDefault();
+        if (searchMatches[currentMatchIndex]) {
+          searchMatches[currentMatchIndex].classList.remove('current');
+        }
+        currentMatchIndex = (currentMatchIndex + 1) % searchMatches.length;
+        searchMatches[currentMatchIndex].classList.add('current');
+        searchMatches[currentMatchIndex].scrollIntoView({ block: 'center', behavior: 'smooth' });
+        searchCount.textContent = `${currentMatchIndex + 1}/${searchMatches.length}`;
+      }
+    });
+
+    // --- Copy to clipboard ---
+    copyBtn.addEventListener('click', async () => {
+      if (!currentTranscript) return;
+
+      const showTimestamps = timestampToggle.checked;
+      let text;
+      if (showTimestamps) {
+        text = currentSegments.map(s => `${formatTimestamp(s.start)} ${s.text}`).join('\n');
+      } else {
+        text = currentTranscript.plain_text || currentSegments.map(s => s.text).join(' ');
+      }
+
+      try {
+        await navigator.clipboard.writeText(text);
+        showToast('✓ Copied to clipboard');
+      } catch {
+        // Fallback
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        showToast('✓ Copied to clipboard');
+      }
+    });
+
+    // --- Download buttons ---
+    document.querySelectorAll('[data-format]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!currentUrl) return;
+
+        const format = btn.getAttribute('data-format');
+        btn.disabled = true;
+
+        try {
+          const body = {
+            url: currentUrl,
+            format: format,
+            include_timestamps: timestampToggle.checked,
+          };
+
+          const lang = langSelect.value;
+          if (lang) body.language = lang;
+          const translate = translateSelect.value;
+          if (translate) body.translate_to = translate;
+
+          const resp = await fetch('/api/export', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+
+          if (!resp.ok) {
+            showToast('Download failed');
+            return;
+          }
+
+          const blob = await resp.blob();
+          const disposition = resp.headers.get('Content-Disposition') || '';
+          let filename = `transcript.${format}`;
+          const match = disposition.match(/filename="?([^"]+)"?/);
+          if (match) filename = match[1];
+
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = filename;
+          a.click();
+          URL.revokeObjectURL(a.href);
+          showToast(`✓ Downloaded ${format.toUpperCase()}`);
+        } catch {
+          showToast('Download failed');
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+
+    // --- Keyboard shortcuts ---
+    document.addEventListener('keydown', (e) => {
+      // Ctrl/Cmd + K = focus search
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        if (results.classList.contains('visible')) {
+          searchInput.focus();
+        } else {
+          urlInput.focus();
+        }
+      }
+    });
+
+  })();
+  </script>
+</body>
+</html>
